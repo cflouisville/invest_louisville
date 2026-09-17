@@ -1,0 +1,297 @@
+---
+title: "IL_data"
+output: html_document
+---
+
+```{r, echo = FALSE, warning=FALSE}
+library(dplyr)
+library(tidyr)
+library(readxl)
+library(purrr)
+library(tibble)
+library(magrittr)
+library(sf)
+library(tidygeocoder)
+library(stringr)
+library(openxlsx)
+library(ggplot2)
+library(scales)
+library(viridis)
+library(glptools)
+library(sf)
+library(lubridate)  
+```
+
+```{r read_in_data, echo = FALSE, results='hide'}
+sheet_names <- excel_sheets("data/Invest Louisville Social Impact Data.xlsx")
+
+list_of_dfs <- sheet_names %>%
+  set_names(sheet_names) %>%
+  map(~ read_excel(path = "data/Invest Louisville Social Impact Data.xlsx", sheet = .x, col_types = "text"))
+
+list_of_dfs <- list_of_dfs[c("Businesses", "Housing")]
+
+list2env(list_of_dfs, envir = .GlobalEnv)
+
+rm(list_of_dfs, sheet_names)
+```
+
+```{r clean_data, echo = FALSE}
+businesses <- Businesses %>%
+  transmute(
+    portfolio_id = as.numeric(`Portfolio #`), 
+    investee = Investee, 
+    contact = Name, 
+    business = `Business Named`,
+    street = Address, 
+    zip = as.numeric(Zip), 
+    bipoc = as.logical(ifelse(BIPOC == "Yes", TRUE, FALSE)), 
+    rate = as.numeric(Rate), 
+    term = as.numeric(Term), 
+    amount = as.numeric(Amount), 
+    balance = as.numeric(Balance),
+    closing_date = as.Date(42705, origin = "1899-12-30"), 
+    status = Status, 
+    purpose = Purpose, 
+    zip = as.numeric(`Zip Code`)
+  )
+
+housing <- Housing %>%
+  transmute(
+    portfolio_id = as.numeric(`Portfolio #`), 
+    investee = Investee, 
+    project_name = `Project Name`, 
+    street = Street, 
+    city = "Louisville", 
+    state = "KY", 
+    zip = as.numeric(Zip), 
+    units = as.numeric(Units), 
+    created = as.numeric(`Units Created`), 
+    preserved = as.numeric(`Units Preserved`),
+    type = Type, 
+    AMI = AMI, 
+    amount = as.numeric(Amount),
+    total_cost = as.numeric(`Total Cost`), 
+    capital_leveraged = total_cost - amount, 
+    senior = Senior, 
+    MF = str_detect(type, "Multi"), 
+    SF = str_detect(type, "Single")
+  )
+
+ rm(Businesses)
+```
+
+```{r geocode, echo = FALSE, results='hide'}
+all_addresses <- businesses %>%
+  mutate(investee_type = "business") %>%
+  select(investee, investee_type, business, street, zip) %>%
+  bind_rows(housing %>% mutate(investee_type = "housing") %>% select(investee, investee_type, street, zip)) %>%
+  mutate(
+    city = "Louisville", 
+    state = "KY"
+  )
+
+census_addresses <- geocode(all_addresses,
+  street       = street,
+  city         = city,
+  state        = state,
+  postalcode   = zip, 
+  method       = "census",
+  full_results = T
+) 
+
+no_match <- census_addresses %>%
+  filter(match_indicator != "Match")
+
+census_addresses <- census_addresses %>%
+  filter(match_indicator == "Match") 
+```
+
+# Invest Louisville
+
+## What is it?
+
+Invest Louisville moves capital into parts of Louisville that have experienced decades of disinvestment. It provides loans, debt guarantees, and lines of credit to support affordable and accessible housing, job creation, and community development in under-resourced areas of Louisville.
+
+## Why Invest Louisville?
+
+Invest Louisville gives local leaders, organizations, and businesses access to high-impact investments that generate financial returns and, most importantly, significant social and community benefits.
+
+# Portfolio Overview:
+
+## Affordable Housing
+
+-   ReLand - Park Hill Algonquin Acres
+-   New Directions
+-   Flagstone Initiative - Rent loans
+
+## Entrepreneurship
+
+-   Louisville Urban League - Reparative Economics Fund
+
+## Community Development
+
+-   REBOUND - Justice Center
+
+# Where?
+
+```{r map, echo = FALSE}
+library(readxl)
+library(sf)
+library(magrittr)
+library(leaflet)
+library(htmlwidgets)
+
+housing <- housing %>%
+  mutate(type = if_else(SF, "Single Family", "Multi-family"))
+
+district_map <- glptools::map_district %>%
+  st_transform(crs = 4326)
+
+marker_pal <- colorFactor(
+  palette = c(
+    "business" = "#fcb900",
+    "housing" = "#440154FF"),
+  domain = census_addresses$investee_type
+)
+
+district_pal <- colorFactor(
+  palette = viridis::viridis(length(unique(district_map$district))),
+  domain  = district_map$district  
+)
+
+IL_map <- leaflet(census_addresses) %>%
+  addProviderTiles(providers$Esri.WorldGrayCanvas) %>%
+  
+  setView(lng = -85.6901697520452, lat = 38.20311417690318, zoom = 10) %>%
+  
+  #district outlines
+  addPolygons(
+    data        = district_map,
+    fillColor   = ~district_pal(district),  
+    fillOpacity = 0.15,                     
+    color       = "#44444444",            
+    weight      = 1.5,                    
+    opacity     = 0.8,
+    label       = ~paste("District", district),
+    labelOptions = labelOptions(
+      style    = list("font-weight" = "bold", padding = "3px 6px"),
+      textsize = "12px",
+      direction = "auto"
+    )) %>%
+  
+  # addresses
+  addCircleMarkers(
+    lng       = ~long,
+    lat       = ~lat,
+    radius    = 5,
+    color     = "#440154FF", #border   
+    fillColor = ~marker_pal(investee_type), #fill 
+    fillOpacity = 1,
+    weight    = 1.5,
+    label     = ~investee,
+    labelOptions = labelOptions(
+      style     = list("font-weight" = "normal", padding = "4px 8px"),
+      textsize  = "15px",
+      direction = "auto"),
+    
+    popup     = ~paste0(
+      "<br>", matched_address, "</br>", 
+      "</br>", investee, "<br>", 
+      "<br>", ifelse(investee_type == "business" | !is.na(business), business, ""),  "</br>"
+      )) %>%
+      
+    addLegend(
+        colors = c("#fcb900", "#440154FF"),
+        labels = c("business", "housing"),
+        opacity = 0.7, 
+        title = "Type of Project", 
+        position = "bottomright"
+      ) 
+
+IL_map
+```
+
+# Investment Areas
+
+```{r, echo= FALSE}
+
+IL_investment_type_amount <- data.frame(
+  Area = c("Affordable Housing", "Community Development", "Entrepreneurship"),
+  Amount = c(3000000, 750000, 1000000)
+)
+
+ggplot(IL_investment_type_amount, aes(x = "", y = Amount, fill = Area )) +
+  geom_col(width = 1, color = "white") +
+  geom_text(
+    aes(label = label_dollar(scale_cut = cut_short_scale())(Amount)),
+    position = position_stack(vjust = 0.5),
+    color = "white",
+    fontface = "bold",
+    size = 5
+  ) +  
+  coord_polar("y", start = 0) +
+  theme_void() +
+  ggtitle("Dollars Accross Investment Areas")
+
+```
+
+# Equity Metrics
+
+```{r equity_metrics, echo=FALSE}
+
+loans_equity_metrics <- data.frame(
+  Metric = c("West End Based", "Black Led", "Social Mobility", "Structural Change"),
+  #Percent of loans 
+  Percent = c(0.8, 0.6, 0.8, 1)
+)
+
+
+ggplot(loans_equity_metrics, aes(x = reorder(Metric, Percent), y = Percent)) +
+  geom_text(
+    aes(label = percent(Percent)),
+    hjust = -0.15,
+    size = 4.5,
+    fontface = "bold"
+  ) +
+  geom_col(fill = "#112142", width = .65) +
+  coord_flip() +
+  scale_y_continuous(labels = percent,
+                     limits = c(0, 1.2),
+                     expand = c(0, 0)) +
+  labs(title = "Equity Metrics") +
+  theme_minimal(base_size = 12) +
+  theme(
+    axis.title = element_blank(),
+    axis.text.x = element_blank(),
+    axis.ticks = element_blank(),
+    panel.grid.major.y = element_blank(),
+    panel.grid.minor = element_blank(),
+    plot.title = element_text(face = "bold"),
+    plot.title.position = "plot"
+  )
+
+
+```
+
+# More on our Investees
+
+## REBOUND:
+
+REBOUND, which stands for Rebuilding Our Urban Neighborhood Dwellings, is a nonprofit Community Housing Development Organization that promotes affordable housing, community development, expands opportunities, and improves stability for Louisville’s low-income and vulnerable families, primarily in West Louisville but throughout the entire city. Through Invest Louisville, REBOUND received a \$750,000 loan to acquire property in Louisville’s West End to build a Justice Center, which will provide quality, affordable space for social justice and organizations with a focus on affordable housing, education, and advocacy.
+
+## Louisville Urban League:
+
+The Louisville Urban League (LUL) is a nonprofit, nonpartisan community service organization dedicated to advancing equality for Black people and marginalized populations across our community. LUL received a \$1 million loan from Invest Louisville to seed its Reparative Economics Fund. This new investment vehicle will provide flexible capital options to Black businesses and community organizations. The Reparative Economics Fund will help create 500 stable Black-owned companies by 2027
+
+## Re:Land:
+
+Re:Land is an emerging urban planning, design, and development group that invests in neighborhoods by empowering communities. Re:Land Group received a \$1.5 million loan from Invest Louisville to build 233 units of affordable multi-family housing on what was previously an abandoned industrial site in the Park Hill/Algonquin Acres neighborhood.
+
+## New Directions Housing Corporation:
+
+New Directions Housing Corporation (NDHC) is a non-profit community development organization that has built and rehabilitated hundreds of multi-family units, providing safe, affordable and decent housing for very low and low income individuals. NDHC received a \$1.5 million revolving line of credit to support the renovation of existing and development of new affordable housing units.
+
+## Flagstone Initiative:
+
+Flagstone Initiative is an eviction-prevention nonprofit that provides rent loans to assist renters at risk of eviction. This investment supports an upstream, proactive approach to housing stability by helping households address short-term financial challenges before they lead to eviction, displacement, or deeper financial hardship. Invest Louisville's \$500,000 loan provides flexible capital to help Flagstone expand its impact.
