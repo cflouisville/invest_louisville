@@ -2,7 +2,11 @@
 output: html_document
 ---
 
-```{r, echo = FALSE, warning=FALSE, message=FALSE}
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(warning = FALSE, message = FALSE)
+```
+
+```{r, echo = FALSE, results='hide', message=FALSE}
 library(dplyr)
 library(tidyr)
 library(readxl)
@@ -17,18 +21,19 @@ library(ggplot2)
 library(scales)
 library(viridis)
 library(glptools)
-library(sf)
 library(lubridate)  
+library(showtext)
+library(sysfonts)
 ```
 
 ```{r read_in_data, echo = FALSE, results='hide', message=FALSE}
-sheet_names <- excel_sheets("data/Invest Louisville Social Impact Data.xlsx")
+sheet_names <- excel_sheets("data/Invest Louisville Social Impact Data- NOT LIVE.xlsx")
 
 list_of_dfs <- sheet_names %>%
   set_names(sheet_names) %>%
-  map(~ read_excel(path = "data/Invest Louisville Social Impact Data.xlsx", sheet = .x, col_types = "text"))
+  map(~ read_excel(path = "data/Invest Louisville Social Impact Data- NOT LIVE.xlsx", sheet = .x, col_types = "text"))
 
-list_of_dfs <- list_of_dfs[c("Businesses", "Housing")]
+list_of_dfs <- list_of_dfs[c("Businesses", "Housing", "Community Development")]
 
 list2env(list_of_dfs, envir = .GlobalEnv)
 
@@ -41,9 +46,7 @@ businesses <- Businesses %>%
     portfolio_id = as.numeric(`Portfolio #`), 
     investee = Investee, 
     contact = Name, 
-    business = `Business Named`,
-    street = Address, 
-    zip = as.numeric(Zip), 
+    project_name = `Business Named`,
     bipoc = as.logical(ifelse(BIPOC == "Yes", TRUE, FALSE)), 
     rate = as.numeric(Rate), 
     term = as.numeric(Term), 
@@ -52,8 +55,9 @@ businesses <- Businesses %>%
     closing_date = as.Date(42705, origin = "1899-12-30"), 
     status = Status, 
     purpose = Purpose, 
-    zip = as.numeric(`Zip Code`)
+    zip= as.numeric(`Zip Code`)
   )
+
 
 housing <- Housing %>%
   transmute(
@@ -77,18 +81,55 @@ housing <- Housing %>%
     SF = str_detect(type, "Single")
   )
 
- rm(Businesses)
+comm_dev <- `Community Development` %>%
+  transmute(
+    portfolio_id = as.numeric(`Portfolio #`), 
+    investee = Investee, 
+    project_name = `Project Name`, 
+    street = Street, 
+    city = "Louisville", 
+    state = "KY", 
+    zip = as.numeric(Zip), 
+    active = as.logical(Active), 
+    amount = as.numeric(Amount), 
+    sqft = as.numeric(SQFT)
+  )
+
+
+ rm(Businesses, Housing, `Community Development`)
 ```
 
-```{r geocode, echo = FALSE, results='hide', message=FALSE}
-all_addresses <- businesses %>%
-  mutate(investee_type = "business") %>%
-  select(investee, investee_type, business, street, zip) %>%
-  bind_rows(housing %>% mutate(investee_type = "housing") %>% select(investee, investee_type, street, zip)) %>%
+```{r geocode, echo = FALSE, results='hide', message=FALSE, results='hide'}
+
+library(sf)
+library(tigris)
+library(dplyr)
+library(purrr)
+
+
+zcta <- zctas(year = 2023)
+
+random_zip <- businesses %>%
   mutate(
-    city = "Louisville", 
-    state = "KY"
-  )
+    point = map(zip, ~ st_sample(filter(zcta, ZCTA5CE20 == .x), 1)),
+    long = map_dbl(point, ~ st_coordinates(.x)[1]),
+    lat = map_dbl(point, ~ st_coordinates(.x)[2])
+  ) %>%
+  select(-point)
+
+# BUsiness Addresses not provided
+# all_addresses <- businesses %>%
+#   mutate(investee_type = "business") %>%
+#   select(investee, investee_type, business, street, zip) %>%
+#   bind_rows(housing %>% mutate(investee_type = "housing") %>% select(investee, investee_type, street, zip)) %>%
+#   mutate(
+#     city = "Louisville", 
+#     state = "KY"
+#   )
+
+all_addresses <- housing %>%
+  mutate(investee_type = "Housing") %>%
+  bind_rows(comm_dev %>% mutate(investee_type = "Community Development"))
 
 census_addresses <- geocode(all_addresses,
   street       = street,
@@ -104,6 +145,14 @@ no_match <- census_addresses %>%
 
 census_addresses <- census_addresses %>%
   filter(match_indicator == "Match") 
+
+all_addresses <- random_zip %>%
+  mutate(investee_type = "Business") %>%
+  select(investee, investee_type, project_name, zip, lat, long) %>%
+  bind_rows(census_addresses) %>%
+  select(investee, project_name, investee_type, zip, lat, long)
+
+rm(no_match, census_addresses, random_zip)
 ```
 
 # Invest Louisville
@@ -141,25 +190,206 @@ library(magrittr)
 library(leaflet)
 library(htmlwidgets)
 
+district_map <- glptools::map_district %>%
+  st_transform(crs = 4326)
+
+all_addresses <- all_addresses %>%
+  mutate(
+    marker_color = case_when(
+      investee_type == "Housing" ~ "#FF7600",
+      investee_type == "Business" ~ "#112142",
+      investee_type == "Community Development" ~ "#BEBEBE",
+      TRUE ~ "red" #unknown
+    )
+  )
+IL_map <- leaflet(all_addresses) %>%
+  addProviderTiles(providers$Esri.WorldGrayCanvas) %>%
+  
+  setView(lng = -85.6901697520452, lat = 38.20311417690318, zoom = 10) %>%
+  
+  #district outlines
+  addPolygons(
+    data        = district_map,
+    fillColor   = "#CDDBFF",  
+    fillOpacity = 0.15,                     
+    color       = "#112142",            
+    weight      = 1.5,                    
+    opacity     = 0.8,
+    label       = ~paste("District", district),
+    labelOptions = labelOptions(
+      style    = list("font-weight" = "bold", padding = "3px 6px"),
+      textsize = "12px",
+      direction = "auto"
+    )) %>%
+  
+  # addresses
+  addCircleMarkers(
+    lng       = ~long,
+    lat       = ~lat,
+    radius    = 5,
+    color     = "#440154FF", #border   
+    fillColor = ~marker_color, #fill 
+    fillOpacity = 1,
+    weight    = 1.5,
+    label     = ~investee,
+    labelOptions = labelOptions(
+      style     = list("font-weight" = "normal", padding = "4px 8px"),
+      textsize  = "15px",
+      direction = "auto"),
+    
+    popup     = ~paste0(
+      #"<br>", matched_address, "</br>", 
+      "<br>", investee_type, "</br>",
+      "<br>", investee, "</br>"
+      #"<br>", ifelse(investee_type == "business" | !is.na(business), business, ""),  "</br>"
+      )) %>%
+      
+    addLegend(
+        colors = c("#FF7600", "#112142", "grey"),
+        labels = c("Housing", "Business", "Community Development"),
+        opacity = 0.7, 
+        title = "Type of Project", 
+        position = "bottomright"
+      ) 
+
+IL_map
+```
+
+```{r pretty_projects_map, eval = FALSE, echo = FALSE, results='hide', message=FALSE}
+font_add_google("Poppins", "poppins")
+showtext_auto()
+
+district_map <- glptools::map_district %>%
+  st_transform(4326)
+
+pretty_map <- ggplot() +
+  geom_sf(
+    data = district_map,
+    fill = "#CDDBFF",      
+    color = "#112142",     
+    linewidth = 0.5,
+    alpha = 0.7
+  ) +
+  
+  geom_point(
+    data = all_addresses,
+    aes(x = long, y = lat, fill = investee_type),
+    color = "#112142", 
+    shape = 21,
+    size = 2.5,
+    stroke = 0.7
+  ) +
+  
+  scale_fill_manual(
+    values = c(
+      "Housing" = "#FF7600",
+      "Business" = "#112142", 
+      "Community Development" = "grey"
+    ),
+    name = "Investee Type"
+  ) +
+  
+  theme_void() +
+  theme(
+    text = element_text(family = "Poppins", size = 54)
+  )
+
+pretty_map
+
+ggsave(
+  filename = "data/projects_map.png",
+  plot = pretty_map,
+  width = 9,
+  height = 7,
+  dpi = 300
+)
+```
+
+```{r pipeline, echo=FALSE, message = FALSE, eval =FALSE}
+
+pipeline <- read.xlsx("data/IL Pipeline Tracker - COPY.xlsx")
+
+pipeline <- pipeline %>%
+  janitor::clean_names() %>%
+  mutate(
+    city = "Louisville", 
+    state = "KY", 
+    lat_man = as.numeric(lat_man), 
+    long_man = as.numeric(long_man)
+  ) %>%
+  select(-lat,-long)
+  
+
+census_addresses_pipeline <- geocode(pipeline,
+  street       = address,
+  city         = city,
+  state        = state,
+  postalcode   = zip, 
+  method       = "census",
+  full_results = T
+) 
+
+census_addresses_pipeline %<>% 
+  filter(!is.na(lat))
+
+pipeline <- pipeline %>%
+  left_join(census_addresses_pipeline %>% select(address, lat, long), by = "address") %>%
+  mutate(
+    lat_all = coalesce(lat, lat_man), 
+    long_all = coalesce(long, long_man)
+  ) %>%
+  select(-lat_man, -long_man, -lat, -long) %>%
+  rename(lat = lat_all, long = long_all)
+
+#zcta <- zctas(year = 2023)
+
+fuzzy_address <- pipeline %>%
+  filter(is.na(lat), !is.na(zip)) %>%
+  mutate(
+    point = map(zip, ~ st_sample(filter(zcta, ZCTA5CE20 == .x), 1)),
+    long_fuzz = map_dbl(point, ~ st_coordinates(.x)[1]),
+    lat_fuzz = map_dbl(point, ~ st_coordinates(.x)[2])
+  ) %>%
+  select(-point)
+
+pipeline <- pipeline %>%
+  left_join(fuzzy_address %>% select(org_name, lat_fuzz, long_fuzz), by = "org_name") %>%
+  mutate(
+    lat = coalesce(lat, lat_fuzz), 
+    long = coalesce(long, long_fuzz)
+  ) %>%
+  select(-lat_fuzz, -long_fuzz) %>%
+  mutate(type = )
+
+rm(fuzzy_address, census_addresses_pipeline)
+
+write.xlsx(pipeline, file = "data/pipeline_addresses.xlsx")
+```
+
+```{r pipeine_map, eval = FALSE, echo = FALSE, results='hide', message=FALSE}
+#Pipeline + Current
+
+all_proj <- pipeline %>%
+  bind_rows(all_addresses %>% rename(org_name = investee, type = investee_type) %>% select(org_name, lat, long, type))
+
+library(readxl)
+library(sf)
+library(magrittr)
+library(leaflet)
+library(htmlwidgets)
+
 housing <- housing %>%
   mutate(type = if_else(SF, "Single Family", "Multi-family"))
 
 district_map <- glptools::map_district %>%
   st_transform(crs = 4326)
 
-marker_pal <- colorFactor(
-  palette = c(
-    "business" = "#fcb900",
-    "housing" = "#440154FF"),
-  domain = census_addresses$investee_type
-)
-
 district_pal <- colorFactor(
   palette = viridis::viridis(length(unique(district_map$district))),
   domain  = district_map$district  
 )
 
-IL_map <- leaflet(census_addresses) %>%
+pipeline_map <- leaflet(pipeline) %>%
   addProviderTiles(providers$Esri.WorldGrayCanvas) %>%
   
   setView(lng = -85.6901697520452, lat = 38.20311417690318, zoom = 10) %>%
@@ -185,30 +415,61 @@ IL_map <- leaflet(census_addresses) %>%
     lat       = ~lat,
     radius    = 5,
     color     = "#440154FF", #border   
-    fillColor = ~marker_pal(investee_type), #fill 
+    fillColor = "#fcb900",
     fillOpacity = 1,
     weight    = 1.5,
-    label     = ~investee,
+    label     = ~org_name,
     labelOptions = labelOptions(
       style     = list("font-weight" = "normal", padding = "4px 8px"),
       textsize  = "15px",
-      direction = "auto"),
-    
-    popup     = ~paste0(
-      "<br>", matched_address, "</br>", 
-      "</br>", investee, "<br>", 
-      "<br>", ifelse(investee_type == "business" | !is.na(business), business, ""),  "</br>"
-      )) %>%
-      
-    addLegend(
-        colors = c("#fcb900", "#440154FF"),
-        labels = c("business", "housing"),
-        opacity = 0.7, 
-        title = "Type of Project", 
-        position = "bottomright"
-      ) 
+      direction = "auto"))
 
-IL_map
+pipeline_map
+
+district_map <- glptools::map_district %>%
+  st_transform(4326)
+
+pretty_map <- ggplot() +
+  geom_sf(
+    data = district_map,
+    fill = "#CDDBFF",      
+    color = "#112142",     
+    linewidth = 0.5,
+    alpha = 0.7
+  ) +
+  
+  geom_point(
+    data = all_addresses,
+    aes(x = long, y = lat, fill = type),
+    color = "#112142", 
+    shape = 21,
+    size = 2.5,
+    stroke = 0.7
+  ) +
+  
+  scale_fill_manual(
+    values = c(
+      "Housing" = "#FF7600",
+      "Business" = "#112142", 
+      "Community Development" = "grey"
+    ),
+    name = "Investee Type"
+  ) +
+  
+  theme_void() +
+  theme(
+    text = element_text(family = "Poppins")
+  )
+
+pretty_map
+
+ggsave(
+  filename = "data/pipeline_map.png",
+  plot = pretty_map,
+  width = 9,
+  height = 7,
+  dpi = 300
+)
 ```
 
 # Investment Areas
