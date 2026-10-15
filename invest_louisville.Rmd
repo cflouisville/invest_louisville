@@ -55,7 +55,10 @@ businesses <- Businesses %>%
     closing_date = as.Date(42705, origin = "1899-12-30"), 
     status = Status, 
     purpose = Purpose, 
-    zip= as.numeric(`Zip Code`)
+    zip= as.numeric(`Zip Code`), 
+    street = street, 
+    city = City, 
+    state = "KY"
   )
 
 housing <- Housing %>%
@@ -116,6 +119,7 @@ loans <- housing %>%
   select(-point)
 
 random_zip <- businesses %>%
+  filter(portfolio_id !=7) %>% 
   mutate(
     point = map(zip, ~ st_sample(filter(zcta, ZCTA5CE20 == .x), 1)),
     long = map_dbl(point, ~ st_coordinates(.x)[1]),
@@ -125,7 +129,8 @@ random_zip <- businesses %>%
 
 all_addresses <- housing %>%
   mutate(investee_type = "Housing") %>%
-  bind_rows(comm_dev %>% mutate(investee_type = "Community Development"))
+  bind_rows(comm_dev %>% mutate(investee_type = "Community Development")) %>%
+  bind_rows(businesses %>% filter(portfolio_id == 7) %>% mutate( investee_type = "Business")) 
 
 census_addresses <- geocode(all_addresses,
   street       = street,
@@ -195,7 +200,7 @@ all_addresses <- all_addresses %>%
     marker_color = case_when(
       investee_type == "Housing" ~ "#FF7600",
       investee_type == "Business" ~ "#112142",
-      investee_type == "Community Development" ~ "#BEBEBE",
+      investee_type == "Community Development" ~ "#80BA00",
       TRUE ~ "red" #unknown
     )
   )
@@ -242,7 +247,7 @@ IL_map <- leaflet(all_addresses) %>%
       )) %>%
       
     addLegend(
-        colors = c("#FF7600", "#112142", "grey"),
+        colors = c("#FF7600", "#112142", "#80BA00"),
         labels = c("Housing", "Business", "Community Development"),
         opacity = 0.7, 
         title = "Type of Project", 
@@ -281,7 +286,7 @@ pretty_map <- ggplot() +
     values = c(
       "Housing" = "#FF7600",
       "Business" = "#112142", 
-      "Community Development" = "grey"
+      "Community Development" = "#80BA00"
     ),
     name = "Investee Type"
   ) +
@@ -445,7 +450,7 @@ pretty_map <- ggplot() +
     values = c(
       "Affordable Housing" = "#FF7600",
       "Business" = "#112142", 
-      "Community Development" = "grey"
+      "Community Development" = "#80BA00"
     ),
     name = "Investee Type"
   ) +
