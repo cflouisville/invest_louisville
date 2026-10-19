@@ -1,4 +1,11 @@
 ---
+output:
+  html_document:
+    css: index.css
+    self_contained: false
+    toc: yes
+    toc_float: yes
+    code_folding: hide
 knit: (function(inputFile, encoding) { rmarkdown::render(inputFile, encoding = encoding, output_file = file.path(dirname(inputFile), 'index.html')) })
 ---
 
@@ -56,9 +63,9 @@ businesses <- Businesses %>%
     status = Status, 
     purpose = Purpose, 
     zip= as.numeric(`Zip Code`), 
-    street = street, 
+    street = Street, 
     city = City, 
-    state = "KY"
+    state = State
   )
 
 housing <- Housing %>%
@@ -118,19 +125,19 @@ loans <- housing %>%
   ) %>%
   select(-point)
 
-random_zip <- businesses %>%
-  filter(portfolio_id !=7) %>% 
-  mutate(
-    point = map(zip, ~ st_sample(filter(zcta, ZCTA5CE20 == .x), 1)),
-    long = map_dbl(point, ~ st_coordinates(.x)[1]),
-    lat = map_dbl(point, ~ st_coordinates(.x)[2])
-  ) %>%
-  select(-point)
+# random_zip <- businesses %>%
+#   filter(portfolio_id !=7) %>% 
+#   mutate(
+#     point = map(zip, ~ st_sample(filter(zcta, ZCTA5CE20 == .x), 1)),
+#     long = map_dbl(point, ~ st_coordinates(.x)[1]),
+#     lat = map_dbl(point, ~ st_coordinates(.x)[2])
+#   ) %>%
+#   select(-point)
 
 all_addresses <- housing %>%
   mutate(investee_type = "Housing") %>%
   bind_rows(comm_dev %>% mutate(investee_type = "Community Development")) %>%
-  bind_rows(businesses %>% filter(portfolio_id == 7) %>% mutate( investee_type = "Business")) 
+  bind_rows(businesses %>% mutate( investee_type = "Business")) 
 
 census_addresses <- geocode(all_addresses,
   street       = street,
@@ -147,10 +154,8 @@ no_match <- census_addresses %>%
 census_addresses <- census_addresses %>%
   filter(match_indicator == "Match") 
 
-all_addresses <- random_zip %>%
-  mutate(investee_type = "Business") %>%
+all_addresses <- census_addresses %>%
   select(investee, investee_type, project_name, zip, lat, long) %>%
-  bind_rows(census_addresses) %>%
   bind_rows(loans %>% mutate(investee_type = "Housing")) %>%
   select(investee, project_name, investee_type, zip, lat, long)
 
