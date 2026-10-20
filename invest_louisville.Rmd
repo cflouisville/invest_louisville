@@ -33,7 +33,7 @@ library(showtext)
 library(sysfonts)
 ```
 
-```{r read_in_data, echo = FALSE, results='hide', message=FALSE}
+```{r read_in_data, echo = FALSE, results='hide', message=FALSE, eval = FALSE}
 sheet_names <- excel_sheets("data/Invest Louisville Social Impact Data- NOT LIVE.xlsx")
 
 list_of_dfs <- sheet_names %>%
@@ -47,7 +47,7 @@ list2env(list_of_dfs, envir = .GlobalEnv)
 rm(list_of_dfs, sheet_names)
 ```
 
-```{r clean_data, echo = FALSE, message=FALSE}
+```{r clean_data, echo = FALSE, message=FALSE, eval = FALSE}
 businesses <- Businesses %>%
   transmute(
     portfolio_id = as.numeric(`Portfolio #`), 
@@ -107,7 +107,7 @@ comm_dev <- `Community Development` %>%
  rm(Businesses, Housing, `Community Development`)
 ```
 
-```{r geocode, echo = FALSE, results='hide', message=FALSE, results='hide'}
+```{r geocode, eval =FALSE ,echo = FALSE, results='hide', message=FALSE, results='hide'}
 
 library(sf)
 library(tigris)
@@ -136,8 +136,9 @@ loans <- housing %>%
 
 all_addresses <- housing %>%
   mutate(investee_type = "Housing") %>%
-  bind_rows(comm_dev %>% mutate(investee_type = "Community Development")) %>%
-  bind_rows(businesses %>% mutate( investee_type = "Business")) 
+  bind_rows(businesses %>% mutate( investee_type = "Business"))  %>%
+  bind_rows(comm_dev %>% mutate(investee_type = "Community Development"))
+
 
 census_addresses <- geocode(all_addresses,
   street       = street,
@@ -154,10 +155,17 @@ no_match <- census_addresses %>%
 census_addresses <- census_addresses %>%
   filter(match_indicator == "Match") 
 
-all_addresses <- census_addresses %>%
-  select(investee, investee_type, project_name, zip, lat, long) %>%
-  bind_rows(loans %>% mutate(investee_type = "Housing")) %>%
+all_addresses <- loans %>%
+  mutate(investee_type = "Housing") %>%
+  bind_rows(census_addresses) %>%
   select(investee, project_name, investee_type, zip, lat, long)
+
+save(all_addresses, file = "data/IL_addresses.Rdata")
+
+# all_addresses <- census_addresses %>%
+#   select(investee, investee_type, project_name, zip, lat, long) %>%
+#   bind_rows(loans %>% mutate(investee_type = "Housing")) %>%
+#   select(investee, project_name, investee_type, zip, lat, long)
 
 rm(no_match, census_addresses, random_zip)
 ```
@@ -196,6 +204,8 @@ library(sf)
 library(magrittr)
 library(leaflet)
 library(htmlwidgets)
+
+load(file = "data/IL_addresses.Rdata")
 
 district_map <- glptools::map_district %>%
   st_transform(crs = 4326)
@@ -266,12 +276,15 @@ IL_map
 font_add_google("Poppins", "poppins")
 showtext_auto()
 
+jeff <- glptools::map_msa_lou%>% filter(county == "Jefferson")
+jeff <- jeff[1]
+
 district_map <- glptools::map_district %>%
   st_transform(4326)
 
 pretty_map <- ggplot() +
   geom_sf(
-    data = district_map,
+    data = jeff,
     fill = "#CDDBFF",      
     color = "#112142",     
     linewidth = 0.5,
@@ -298,13 +311,13 @@ pretty_map <- ggplot() +
   
   theme_void() +
   theme(
-    text = element_text(family = "Poppins", size = 54)
+    text = element_text(family = "poppins", size = 50)
   )
 
 pretty_map
 
 ggsave(
-  filename = "data/projects_map.png",
+  filename = "data/projects_map_v2.png",
   plot = pretty_map,
   width = 9,
   height = 7,
@@ -462,7 +475,7 @@ pretty_map <- ggplot() +
   
   theme_void() +
   theme(
-    text = element_text(family = "Poppins"),
+    text = element_text(family = "poppins"),
     legend.position = "none"
   )
 
@@ -481,6 +494,10 @@ ggsave(
 # Investment Areas
 
 ```{r, echo= FALSE}
+colors = c("#FF7600", "#80BA00", "#112142")
+
+font_add_google("Poppins", "poppins")
+showtext_auto()
 
 IL_investment_type_amount <- data.frame(
   Area = c("Affordable Housing", "Community Development", "Entrepreneurship"),
@@ -493,11 +510,18 @@ ggplot(IL_investment_type_amount, aes(x = "", y = Amount, fill = Area )) +
     aes(label = label_dollar(scale_cut = cut_short_scale())(Amount)),
     position = position_stack(vjust = 0.5),
     color = "white",
+    family = "poppins",
     fontface = "bold",
-    size = 5
+    size = 15
   ) +  
+  scale_fill_manual(values = colors) +  
   coord_polar("y", start = 0) +
   theme_void() +
+  theme(
+    text = element_text(family = "poppins"),
+    legend.position = "none", 
+    title = element_blank()
+  ) + 
   ggtitle("Dollars Accross Investment Areas")
 
 ```
@@ -517,10 +541,10 @@ ggplot(loans_equity_metrics, aes(x = reorder(Metric, Percent), y = Percent)) +
   geom_text(
     aes(label = percent(Percent)),
     hjust = -0.15,
-    size = 4.5,
+    size = 10,
     fontface = "bold"
   ) +
-  geom_col(fill = "#112142", width = .65) +
+  geom_col(fill = "#FF7600", width = .65) +
   coord_flip() +
   scale_y_continuous(labels = percent,
                      limits = c(0, 1.2),
@@ -533,8 +557,9 @@ ggplot(loans_equity_metrics, aes(x = reorder(Metric, Percent), y = Percent)) +
     axis.ticks = element_blank(),
     panel.grid.major.y = element_blank(),
     panel.grid.minor = element_blank(),
-    plot.title = element_text(face = "bold"),
-    plot.title.position = "plot"
+    text = element_text(family = "poppins", size = 35),
+    legend.position = "none", 
+    title = element_blank()
   )
 
 
