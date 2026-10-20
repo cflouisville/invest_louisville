@@ -494,14 +494,14 @@ ggsave(
 # Investment Areas
 
 ```{r, echo= FALSE}
-colors = c("#FF7600", "#80BA00", "#112142")
+colors = c("#FF7600", "#80BA00", "#112142", "#3378E6")
 
 font_add_google("Poppins", "poppins")
 showtext_auto()
 
 IL_investment_type_amount <- data.frame(
-  Area = c("Affordable Housing", "Community Development", "Entrepreneurship"),
-  Amount = c(3000000, 750000, 1000000)
+  Area = c("Affordable & Accessible Housing", "Community Development", "Job Creation", "Money Market"),
+  Amount = c(3500000, 2896541, 1500000, 5433774)
 )
 
 ggplot(IL_investment_type_amount, aes(x = "", y = Amount, fill = Area )) +
@@ -512,7 +512,7 @@ ggplot(IL_investment_type_amount, aes(x = "", y = Amount, fill = Area )) +
     color = "white",
     family = "poppins",
     fontface = "bold",
-    size = 15
+    size = 7
   ) +  
   scale_fill_manual(values = colors) +  
   coord_polar("y", start = 0) +
